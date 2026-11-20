@@ -48,7 +48,8 @@ PE 官方字段：`GET /api/a-share/valuations/snapshot` → `data.item[].pe_ttm
 3. 在 **Environment Variables** 添加：
    - `FUYAO_API_KEY` = 你的扶摇 Key（Production / Preview 都建议勾选）
    - 可选：`FUYAO_BASE_URL`、`FUYAO_UNIVERSE`、`FUYAO_REPORT`
-4. Deploy。部署后打开线上 URL，走一遍澄清 → 筛选验收。
+   - 可选（澄清用 LLM，未配则 `usedLlm=false` 走本地规则）：`OPENAI_API_KEY`，以及 `OPENAI_BASE_URL` / `OPENAI_MODEL`
+4. Deploy。修改环境变量后需 **Redeploy**。打开线上 URL，走一遍澄清 → 筛选验收。
 
 ## 产品怎么用
 
