@@ -38,6 +38,7 @@ export default function HomePage() {
   const [conditions, setConditions] = useState<Condition[]>([]);
   const [result, setResult] = useState<ScreenResult | null>(null);
   const [previousSelected, setPreviousSelected] = useState<string[] | undefined>();
+  const [snapshotId, setSnapshotId] = useState<string | undefined>();
   const [screenedSignature, setScreenedSignature] = useState<string | null>(null);
   const [filter, setFilter] = useState<StockStatus | "all">("all");
   const [busy, setBusy] = useState<"clarify" | "screen" | null>(null);
@@ -66,6 +67,7 @@ export default function HomePage() {
     setNotice(null);
     setResult(null);
     setPreviousSelected(undefined);
+    setSnapshotId(undefined);
     setScreenedSignature(null);
     try {
       const res = await fetch("/api/clarify", {
@@ -77,7 +79,11 @@ export default function HomePage() {
       if (!res.ok) throw new Error(data.error ?? "澄清失败");
       setClarify(data);
       setConditions(data.conditions);
-      setNotice("已生成可修改条件。请检查阈值后点击「执行筛选」。");
+      if (data.complianceBlocked) {
+        setNotice(data.complianceMessage ?? data.summary);
+      } else {
+        setNotice("已生成可修改条件。请检查阈值后点击「执行筛选」。");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "澄清失败");
     } finally {
@@ -100,21 +106,23 @@ export default function HomePage() {
         body: JSON.stringify({
           conditions,
           previousSelectedCodes: previousSelected,
+          snapshotId,
         }),
       });
       const data = (await res.json()) as ScreenResult & { error?: string; note?: string };
       if (!res.ok) throw new Error(data.error ?? data.note ?? "筛选失败");
       setResult(data);
+      setSnapshotId(data.snapshotId);
       setPreviousSelected(
         data.results.filter((r) => r.status === "selected").map((r) => r.code),
       );
       setScreenedSignature(conditionsSignature(conditions));
       setFilter("all");
       if (data.delta) {
-        setNotice(`筛选完成。${data.delta.note}`);
+        setNotice(`筛选完成（同一数据快照）。${data.delta.note}`);
       } else {
         setNotice(
-          "筛选完成。若要查看进出名单，请修改下方阈值后再次点击「执行筛选」。",
+          "筛选完成。若要查看进出名单，请修改下方阈值后再次点击「执行筛选」（将复用同一数据快照）。",
         );
       }
     } catch (err) {
@@ -158,6 +166,7 @@ export default function HomePage() {
     });
     setResult(null);
     setPreviousSelected(s.selectedCodes);
+    setSnapshotId(undefined);
     setScreenedSignature(null);
     setNotice(`已加载「${s.name}」。点击「执行筛选」可基于当前条件重新计算。`);
   }
@@ -231,8 +240,13 @@ export default function HomePage() {
           </p>
           <p style={{ marginTop: 8, fontSize: "0.9rem" }}>{clarify.aiRoleNote}</p>
           <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
-            条件起草：{clarify.usedLlm ? "已调用 LLM" : "本地规则启发式（未配置 OPENAI_API_KEY）"}
+            条件起草：{clarify.usedLlm ? "已调用 LLM（usedLlm=true）" : "本地规则启发式（usedLlm=false）"}
           </p>
+          {clarify.complianceBlocked && clarify.complianceMessage && (
+            <p className="alert alert-error" style={{ marginTop: 12 }}>
+              {clarify.complianceMessage}
+            </p>
+          )}
           {clarify.questions.length > 0 && (
             <div className="stack" style={{ marginTop: 14 }}>
               {clarify.questions.map((q) => (

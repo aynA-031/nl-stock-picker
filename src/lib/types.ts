@@ -43,6 +43,9 @@ export interface ClarifyResult {
   conflicts: ConflictIssue[];
   aiRoleNote: string;
   usedLlm: boolean;
+  /** True when intent asks for guaranteed returns / buy advice */
+  complianceBlocked?: boolean;
+  complianceMessage?: string;
 }
 
 export interface MetricValue {
@@ -50,9 +53,12 @@ export interface MetricValue {
   label: string;
   value: number | null;
   unit: string;
+  /** Display clock: report period / announce date / K-line cutoff */
   asOf: string;
   source: string;
   missingReason?: string;
+  reportPeriod?: string;
+  announceDate?: string;
 }
 
 export interface StockSnapshot {
@@ -105,9 +111,12 @@ export interface ScreenResult {
     pending: number;
   };
   delta?: ScreenDelta;
+  /** Reuse this id on the next screen so delta uses the same market snapshot */
+  snapshotId?: string;
 }
 
 export interface ScreenRequest {
   conditions: Condition[];
   previousSelectedCodes?: string[];
+  snapshotId?: string;
 }

@@ -29,8 +29,13 @@ function baseQuestions(): ClarificationQuestion[] {
   ];
 }
 
+function isPredictionOrAdviceIntent(intent: string): boolean {
+  return /必涨|稳赚|保证收益|明天涨|后天涨|荐股买入|买哪只|给我一只.*涨|涨停推荐|必赚/.test(
+    intent,
+  );
+}
+
 function applyHeuristicAdjustments(intent: string, conditions: Condition[]): Condition[] {
-  const text = intent.toLowerCase();
   const next = conditions.map((c) => ({ ...c }));
 
   if (/高增长|高速增长|强改善/.test(intent)) {
@@ -53,8 +58,6 @@ function applyHeuristicAdjustments(intent: string, conditions: Condition[]): Con
     if (c) c.value = 50;
   }
 
-  // Keep unused var lint-free for potential future NLP features
-  void text;
   return next;
 }
 
@@ -65,7 +68,7 @@ async function tryLlmDraft(intent: string): Promise<Condition[] | null> {
   const base = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
   const model = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
 
-  const system = `你是选股条件起草助手。只输出 JSON，不要投资建议。
+  const system = `你是选股条件起草助手。只输出 JSON，不要投资建议，不要预测涨跌。
 从用户意图生成三个条件的阈值调整：
 - revenue_yoy: op ">" 或 ">=", value 数字(%)
 - pe_ttm: op "between", value 下限, valueMax 上限
@@ -116,6 +119,25 @@ JSON 形如：{"revenue_yoy":{"op":">","value":10},"pe_ttm":{"op":"between","val
 /** AI / rules draft conditions; conflict detection stays deterministic. */
 export async function clarifyIntent(intent: string): Promise<ClarifyResult> {
   const trimmed = intent.trim() || "经营改善、估值合理、走势稳定";
+
+  if (isPredictionOrAdviceIntent(trimmed)) {
+    const conditions = cloneConditions();
+    return {
+      intent: trimmed,
+      summary:
+        "已拒绝涨跌预测与买卖建议请求。本产品只提供可检查的数据条件筛选与解释，不输出“必涨”标的或交易指令。",
+      questions: [],
+      conditions,
+      conflicts: detectConflicts(conditions),
+      aiRoleNote:
+        "合规边界：不预测涨跌、不承诺收益、不直接荐股。若你改用经营/估值/波动等事实意图，可继续生成条件并筛选。",
+      usedLlm: false,
+      complianceBlocked: true,
+      complianceMessage:
+        "无法提供“明天必涨”的股票或任何确定性涨跌预测。你可以改用如「经营改善、估值合理、走势稳定」等可验证条件进行筛选；结果仅为数据对照，不构成投资建议。",
+    };
+  }
+
   let usedLlm = false;
   let conditions = await tryLlmDraft(trimmed);
   if (conditions) {

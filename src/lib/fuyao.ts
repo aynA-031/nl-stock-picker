@@ -21,10 +21,6 @@ interface ValuationItem {
   ticker?: string;
   name?: string | null;
   pe_ttm?: number | null;
-  pe_mrq?: number | null;
-  pb_mrq?: number | null;
-  ps_ttm?: number | null;
-  pcf_ttm?: number | null;
 }
 
 interface ValuationData {
@@ -38,14 +34,35 @@ interface PriceBar {
   close_price: number;
 }
 
+interface IncomeItem {
+  fiscal_year?: number;
+  fiscal_period?: string;
+  report_date_ms?: number | null;
+  period_end_ms?: number | null;
+}
+
+const VOL_CLOSE_COUNT = 21; // 20 returns need 21 closes
+
 function env(name: string): string | undefined {
   const v = process.env[name];
   return v && v.trim() ? v.trim() : undefined;
 }
 
-function msToDate(ms?: number | null): string {
-  if (!ms || !Number.isFinite(ms)) return new Date().toISOString().slice(0, 10);
+function msToDate(ms?: number | null): string | null {
+  if (!ms || !Number.isFinite(ms)) return null;
   return new Date(ms).toISOString().slice(0, 10);
+}
+
+export function formatReportLabel(report: string): string {
+  const m = report.match(/^(\d{4})-([1-4])$/);
+  if (!m) return `报告期 ${report}`;
+  const map: Record<string, string> = {
+    "1": "一季报",
+    "2": "中报",
+    "3": "三季报",
+    "4": "年报",
+  };
+  return `报告期 ${m[1]}${map[m[2]]}（${report}）`;
 }
 
 function metric(
@@ -54,7 +71,7 @@ function metric(
   value: number | null,
   unit: string,
   asOf: string,
-  missingReason?: string,
+  extra?: { missingReason?: string; reportPeriod?: string; announceDate?: string },
 ): MetricValue {
   return {
     field,
@@ -63,18 +80,17 @@ function metric(
     unit,
     asOf,
     source: "扶摇 REST API",
-    missingReason,
+    missingReason: extra?.missingReason,
+    reportPeriod: extra?.reportPeriod,
+    announceDate: extra?.announceDate,
   };
 }
 
 /**
- * Fuyao client aligned with official docs:
- * https://fuyao.aicubes.cn/docs/
- *
- * Auth: header `X-api-key` (same key as MCP env `API_KEY`).
- * PE(TTM): GET /api/a-share/valuations/snapshot → data.item[].pe_ttm
- * Revenue YoY: GET /api/a-share/financials/indicators → operating_income_yoy_growth_ratio
- * Volatility: derived from GET /api/a-share/prices/historical close_price series
+ * Fuyao client — official REST paths only.
+ * PE: valuations/snapshot pe_ttm
+ * Revenue YoY: financials/indicators (+ income-statements report_date_ms)
+ * Volatility: prices/historical — requires 21 valid closes for 20-day vol
  */
 export async function loadMarketBundle(): Promise<MarketBundle> {
   const apiKey = env("FUYAO_API_KEY") ?? env("API_KEY");
@@ -86,7 +102,7 @@ export async function loadMarketBundle(): Promise<MarketBundle> {
       stocks: DEMO_STOCKS,
       fetchNotes: [
         "未配置 FUYAO_API_KEY（或 API_KEY），已使用明确标注的演示数据。",
-        "扶摇 MCP 未接入本会话；网页通过 REST 调用同一套能力。拿到 Key 后填入 .env.local 即可。",
+        "扶摇 MCP 未接入本会话；网页通过 REST 调用同一套能力。拿到 Key 后填入 .env.local / Vercel 环境变量即可。",
       ],
     };
   }
@@ -99,14 +115,13 @@ export async function loadMarketBundle(): Promise<MarketBundle> {
       return { ...DEMO_META, stocks: DEMO_STOCKS, fetchNotes: notes };
     }
     const asOf =
-      stocks
-        .map((s) => s.metrics.pe_ttm.asOf)
-        .find((d) => !!d) ?? new Date().toISOString().slice(0, 10);
+      stocks.map((s) => s.metrics.pe_ttm.asOf).find((d) => !!d) ??
+      new Date().toISOString().slice(0, 10);
     return {
       dataMode: "fuyao",
       asOf,
       universeNote:
-        "扶摇真实数据（REST：valuations/snapshot + financials/indicators + prices/historical）",
+        "扶摇真实数据（REST：valuations/snapshot + financials/indicators + prices/historical；名单对比复用同一快照）",
       stocks,
       fetchNotes: notes,
     };
@@ -136,15 +151,16 @@ async function fetchOfficialBundle(
     `/api/a-share/valuations/snapshot?thscodes=${encodeURIComponent(codes.join(","))}`,
   );
   assertOk(valuations, "valuations/snapshot");
-  const asOf = msToDate(valuations.data.timestamp);
+  const peAsOf = msToDate(valuations.data.timestamp) ?? new Date().toISOString().slice(0, 10);
   const items = valuations.data.item ?? [];
   notes.push(
-    `扶摇估值快照成功：${items.length} 只，data.timestamp=${valuations.data.timestamp ?? "null"}（${asOf}）。`,
+    `扶摇估值快照成功：${items.length} 只，data.timestamp=${valuations.data.timestamp ?? "null"}（${peAsOf}）。`,
   );
 
   const report = env("FUYAO_REPORT") ?? guessRecentReport();
+  // Wider window so we can collect 21 trading closes
   const end = Date.now();
-  const start = end - 45 * 24 * 3600 * 1000;
+  const start = end - 90 * 24 * 3600 * 1000;
 
   const stocks: StockSnapshot[] = [];
   for (const code of codes) {
@@ -153,6 +169,8 @@ async function fetchOfficialBundle(
 
     let revenue: number | null = null;
     let revenueMissing = `扶摇财务指标未取到营收同比（report=${report}）`;
+    let announceDate: string | undefined;
+    const reportLabel = formatReportLabel(report);
     try {
       const fin = await getJson<{
         thscode: string;
@@ -168,7 +186,6 @@ async function fetchOfficialBundle(
       );
       if (fin.code === 0) {
         const growth = fin.data.abilities?.find((a) => a.ability === "growth");
-        // Docs list operating_income_yoy_growth_ratio; live payload uses calculate_* prefix.
         const hit = growth?.indicators?.find(
           (i) =>
             i.index_id === "operating_income_yoy_growth_ratio" ||
@@ -176,9 +193,13 @@ async function fetchOfficialBundle(
         );
         if (hit?.value != null && hit.value !== "") {
           revenue = Number(hit.value);
-          if (!Number.isFinite(revenue)) revenue = null;
-          else revenueMissing = undefined as unknown as string;
+          if (!Number.isFinite(revenue)) {
+            revenue = null;
+          } else {
+            revenueMissing = undefined as unknown as string;
+          }
         }
+        announceDate = (await fetchAnnounceDate(baseUrl, apiKey, code, report)) ?? undefined;
       } else {
         revenueMissing = `财务指标 code=${fin.code} ${fin.message}`;
       }
@@ -186,9 +207,13 @@ async function fetchOfficialBundle(
       revenueMissing = err instanceof Error ? err.message : String(err);
     }
 
+    const revenueAsOf = announceDate
+      ? `${reportLabel}；公告日 ${announceDate}`
+      : reportLabel;
+
     let vol: number | null = null;
-    let volMissing = "近20日波动率需由历史K线计算，本次未取到足够收盘价";
-    let volAsOf = asOf;
+    let volMissing = `近20个交易日波动率需要 ${VOL_CLOSE_COUNT} 个有效收盘价，当前不足`;
+    let volAsOf = peAsOf;
     try {
       const hist = await getJson<{ timestamp?: number | null; item?: PriceBar[] }>(
         baseUrl,
@@ -196,14 +221,22 @@ async function fetchOfficialBundle(
         `/api/a-share/prices/historical?thscode=${encodeURIComponent(code)}&interval=1d&start=${start}&end=${end}&adjust=forward`,
       );
       if (hist.code === 0) {
-        const closes = (hist.data.item ?? [])
-          .map((b) => b.close_price)
-          .filter((n) => typeof n === "number" && Number.isFinite(n));
-        vol = annualizedVolFromCloses(closes.slice(-21));
-        if (vol !== null) {
-          volMissing = undefined as unknown as string;
-          const last = hist.data.item?.[hist.data.item.length - 1];
-          volAsOf = msToDate(last?.date_ms ?? hist.data.timestamp);
+        const bars = (hist.data.item ?? []).filter(
+          (b) => typeof b.close_price === "number" && Number.isFinite(b.close_price) && b.close_price > 0,
+        );
+        const lastBars = bars.slice(-VOL_CLOSE_COUNT);
+        if (lastBars.length < VOL_CLOSE_COUNT) {
+          vol = null;
+          volMissing = `近20个交易日波动率需要 ${VOL_CLOSE_COUNT} 个有效收盘价，实际仅 ${lastBars.length} 个，无法计算`;
+        } else {
+          const closes = lastBars.map((b) => b.close_price);
+          vol = annualizedVolFromCloses(closes);
+          if (vol === null) {
+            volMissing = `已取到 ${closes.length} 个收盘价，但收益序列无效，无法计算波动率`;
+          } else {
+            volMissing = undefined as unknown as string;
+            volAsOf = `近${VOL_CLOSE_COUNT - 1}个交易日波动率；K线截止 ${msToDate(lastBars[lastBars.length - 1]?.date_ms) ?? peAsOf}`;
+          }
         }
       } else {
         volMissing = `历史K线 code=${hist.code} ${hist.message}`;
@@ -222,16 +255,20 @@ async function fetchOfficialBundle(
           "营收同比",
           revenue,
           "%",
-          asOf,
-          revenue === null ? revenueMissing : undefined,
+          revenueAsOf,
+          {
+            missingReason: revenue === null ? revenueMissing : undefined,
+            reportPeriod: report,
+            announceDate,
+          },
         ),
         pe_ttm: metric(
           "pe_ttm",
           "PE(TTM)",
           pe,
           "倍",
-          asOf,
-          pe === null ? "扶摇估值快照缺少 pe_ttm" : undefined,
+          `估值快照时点 ${peAsOf}`,
+          { missingReason: pe === null ? "扶摇估值快照缺少 pe_ttm" : undefined },
         ),
         volatility_20d: metric(
           "volatility_20d",
@@ -239,7 +276,7 @@ async function fetchOfficialBundle(
           vol,
           "%",
           volAsOf,
-          vol === null ? volMissing : undefined,
+          { missingReason: vol === null ? volMissing : undefined },
         ),
       },
     });
@@ -248,18 +285,53 @@ async function fetchOfficialBundle(
   return stocks;
 }
 
+async function fetchAnnounceDate(
+  baseUrl: string,
+  apiKey: string,
+  code: string,
+  report: string,
+): Promise<string | null> {
+  const m = report.match(/^(\d{4})-([1-4])$/);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const q = m[2];
+  const period = q === "4" ? "annual" : "quarterly";
+  try {
+    const res = await getJson<{ item?: IncomeItem[] }>(
+      baseUrl,
+      apiKey,
+      `/api/a-share/financials/income-statements?thscode=${encodeURIComponent(code)}&period=${period}&limit=8`,
+    );
+    if (res.code !== 0) return null;
+    const items = res.data.item ?? [];
+    const hit = items.find((it) => {
+      if (it.fiscal_year !== year) return false;
+      if (period === "annual") return true;
+      const fp = (it.fiscal_period ?? "").toUpperCase();
+      if (q === "1") return fp.includes("Q1") || fp === "1";
+      if (q === "2") return fp.includes("Q2") || fp.includes("H1") || fp === "2";
+      if (q === "3") return fp.includes("Q3") || fp === "3";
+      return false;
+    });
+    return msToDate(hit?.report_date_ms ?? null);
+  } catch {
+    return null;
+  }
+}
+
+/** Requires exactly 21 closes → 20 log returns. */
 function annualizedVolFromCloses(closes: number[]): number | null {
-  if (closes.length < 3) return null;
+  if (closes.length < VOL_CLOSE_COUNT) return null;
   const rets: number[] = [];
   for (let i = 1; i < closes.length; i++) {
-    if (closes[i - 1] > 0) rets.push(Math.log(closes[i] / closes[i - 1]));
+    if (closes[i - 1] > 0 && closes[i] > 0) rets.push(Math.log(closes[i] / closes[i - 1]));
   }
-  if (rets.length < 2) return null;
+  if (rets.length < VOL_CLOSE_COUNT - 1) return null;
   const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
   const variance =
     rets.reduce((a, b) => a + (b - mean) * (b - mean), 0) / (rets.length - 1);
   const daily = Math.sqrt(variance);
-  return Math.round(daily * Math.sqrt(252) * 10000) / 100; // percent, 2 decimals
+  return Math.round(daily * Math.sqrt(252) * 10000) / 100;
 }
 
 function guessRecentReport(): string {
@@ -277,15 +349,13 @@ async function getJson<T>(
   apiKey: string,
   path: string,
 ): Promise<ApiEnvelope<T>> {
-  const url = `${baseUrl}${path}`;
-  const res = await fetch(url, {
+  const res = await fetch(`${baseUrl}${path}`, {
     headers: {
       "X-api-key": apiKey,
       Accept: "application/json",
     },
     cache: "no-store",
   });
-  // Official docs: business errors often still HTTP 200 with code in body
   const payload = (await res.json()) as ApiEnvelope<T>;
   if (!res.ok && (payload?.code === undefined || payload.code === 0)) {
     throw new Error(`HTTP ${res.status} ${res.statusText} @ ${path}`);
