@@ -42,3 +42,8 @@ yarn-error.log*
 
 # vendor / local install mirrors
 /vendor
+
+*.zip
+nl-stock-picker-*.zip
+_submit_*
+
