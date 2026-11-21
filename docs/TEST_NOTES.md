@@ -92,5 +92,5 @@ Vercel 配置页：项目 → Settings → Environment Variables → `FUYAO_API_
 | 混合意图 | 含已支持 + 不支持 | 只生成受支持条件；红字列出不支持项 | 同左 |
 
 `npm run build`：通过（exit 0）。  
-线上功能验收提交：`a4b3742`（Vercel Production Ready）。  
-交付文档补记提交见本仓库后续 `docs` 提交。
+`npx tsx scripts/verify-review2.mts`：波动率 -1% 回退 + 8 只全部待确认 断言通过。  
+线上过严提示复测（Production）：提交 `91796d6`，`selected=0/excluded=8`，alerts 含「阈值可能过严」、不含「全部待确认」。
