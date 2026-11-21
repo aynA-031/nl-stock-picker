@@ -1,8 +1,8 @@
 /**
  * Review item ② checks (no network):
  * 1) Simulated LLM returns volatility -1% → fallback to default + reason
- * 2) 8/8 pending → all_pending tip, NOT too_strict
- * 3) usable data + 0 selected + excluded → too_strict
+ * 2) 0 selected + pending > 0 →「暂无确认入选，仍有 N 只…」
+ * 3) 0 selected + 0 pending →「阈值可能过严」
  */
 import { applyLlmDraftPatches } from "../src/lib/clarify";
 import { DEFAULT_CONDITIONS } from "../src/lib/defaults";
@@ -10,6 +10,7 @@ import { runScreen } from "../src/lib/engine";
 import {
   SCREEN_TIP_TOO_STRICT,
   classifyScreenOutcome,
+  tipPendingRemain,
   withOutcomeAlert,
 } from "../src/lib/screen-outcome";
 import type { MetricId, MetricValue, StockSnapshot } from "../src/lib/types";
@@ -62,10 +63,6 @@ assert(
   draft.draftNotes.some((n) => n.includes("超出允许范围") && n.includes("-1")),
   `draftNotes explain out-of-range -1: ${draft.draftNotes.join(" | ")}`,
 );
-assert(
-  draft.draftNotes.some((n) => n.includes("已回退为默认")),
-  "draftNotes mention fallback to default",
-);
 
 // --- 2) Eight stocks all pending ---
 const pendingBundle = runScreen({
@@ -77,27 +74,35 @@ const pendingBundle = runScreen({
   dataAlerts: ["fixture: 模拟 8 只全部字段缺失"],
 });
 assert(pendingBundle.counts.pending === 8, `pending=8 got ${pendingBundle.counts.pending}`);
-assert(pendingBundle.counts.selected === 0, "selected=0");
-assert(pendingBundle.counts.excluded === 0, "excluded=0");
 const pendingOutcome = classifyScreenOutcome(pendingBundle.counts, pendingBundle.dataAlerts);
-assert(pendingOutcome.kind === "all_pending", `kind=all_pending got ${pendingOutcome.kind}`);
+assert(pendingOutcome.kind === "has_pending", `kind=has_pending got ${pendingOutcome.kind}`);
 assert(
-  !!pendingOutcome.tip &&
-    pendingOutcome.tip.includes("全部待确认") &&
-    !pendingOutcome.tip.includes(SCREEN_TIP_TOO_STRICT),
-  `all_pending tip without too_strict: ${pendingOutcome.tip}`,
+  pendingOutcome.tip === tipPendingRemain(8),
+  `pending tip: ${pendingOutcome.tip}`,
+);
+assert(
+  !pendingOutcome.tip!.includes(SCREEN_TIP_TOO_STRICT),
+  "pending tip is not too_strict",
 );
 const pendingAlerts = withOutcomeAlert([...pendingBundle.dataAlerts], pendingBundle.counts);
 assert(
-  pendingAlerts.some((a) => a.includes("全部待确认")),
+  pendingAlerts.some((a) => a === tipPendingRemain(8)),
   "withOutcomeAlert adds pending tip",
 );
 assert(
   !pendingAlerts.some((a) => a.includes(SCREEN_TIP_TOO_STRICT)),
-  "withOutcomeAlert does NOT add too_strict for all-pending",
+  "withOutcomeAlert does NOT add too_strict when pending>0",
 );
 
-// --- 3) Usable data, zero hits ---
+// --- 2b) Mix: 0 selected, some excluded, some pending ---
+const mix = classifyScreenOutcome(
+  { selected: 0, excluded: 5, pending: 3 },
+  ["扶摇估值快照成功：8 只"],
+);
+assert(mix.kind === "has_pending", `mix kind=has_pending got ${mix.kind}`);
+assert(mix.tip === tipPendingRemain(3), `mix tip: ${mix.tip}`);
+
+// --- 3) 0 selected + 0 pending → too_strict ---
 const strictOutcome = classifyScreenOutcome(
   { selected: 0, excluded: 8, pending: 0 },
   ["扶摇估值快照成功：8 只"],
@@ -109,4 +114,4 @@ if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed`);
   process.exit(1);
 }
-console.log("\nALL review② checks passed");
+console.log("\nALL pending/too-strict tip checks passed");

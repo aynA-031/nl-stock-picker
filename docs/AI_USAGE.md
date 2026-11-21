@@ -44,7 +44,7 @@
 - **发现**：模型可能输出非数字/倒置区间/无意义负波动率；仅按 `selected===0` 提示「过严」会把「全部待确认（缺数）」误判成阈值问题。
 - **修复**：
   1. `LLM_THRESHOLD_RANGES` 对各指标做明确数值范围校验（波动率上限须 ∈ [0.1, 200]%）；`applyLlmDraftPatches` 无效则回退 `defaults.ts` 并写 `draftNotes` 原因。模拟「波动率 -1%」已验证回退默认 35%。
-  2. 前后端共用 `classifyScreenOutcome`：仅数据可用且存在 excluded、无入选时提示「阈值可能过严」；8 只全部待确认时提示数据缺失/待确认，不提示过严；接口失败走 `data_unavailable`。
+  2. 前后端共用 `classifyScreenOutcome`：0 入选且仍有待确认 →「暂无确认入选，仍有 N 只因数据不足待确认」；仅 0 入选且 0 待确认 →「阈值可能过严」；接口失败走 `data_unavailable`。
 
 ### 3. 不支持指标未明示
 

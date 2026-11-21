@@ -72,14 +72,17 @@ Vercel 配置页：项目 → Settings → Environment Variables → `FUYAO_API_
 
 ### 7.2 模型阈值范围 + 0 命中 / 全部待确认（评审 ② 补齐）
 
-前后端共用 `src/lib/screen-outcome.ts` 的 `classifyScreenOutcome`：**仅当数据可用且存在 excluded、selected=0** 时提示「阈值可能过严」；**全部待确认**时提示数据缺失/待确认，不提示过严。
+前后端共用 `src/lib/screen-outcome.ts` 的 `classifyScreenOutcome`：
+
+- **0 入选且仍有待确认** →「暂无确认入选，仍有 N 只因数据不足待确认」
+- **仅当 0 入选且 0 待确认** →「当前股票池下没有命中，阈值可能过严」
 
 | 用例 | 做法 | 实测 |
 |------|------|------|
 | 模拟模型「波动率上限 -1%」 | `applyLlmDraftPatches({ volatility_20d: { op:"<", value:-1 } })` | 回退默认 `< 35%`；`draftNotes` 含「超出允许范围 [0.1, 200]%」与「已回退为默认」 |
 | 指标数值范围 | `LLM_THRESHOLD_RANGES`：营收同比 [-100,500]%；PE [0,200] 倍；波动率上限 [0.1,200]% | 写入 `validate-conditions.ts`，LLM system prompt 同步提示 |
-| 过严阈值（有数据） | 营收 `>999`、PE `1~2`、波动 `<1` | **HTTP 200**；`excluded>0`；alerts 含「当前股票池下没有命中，阈值可能过严」 |
-| **8 只全部待确认** | 引擎合成 8 只字段全缺失股票 + `withOutcomeAlert` | `counts.pending=8`；kind=`all_pending`；tip 含「8 只全部待确认（数据缺失或字段不足）」；**不含**「阈值可能过严」 |
+| 0 入选 + 0 待确认 | `excluded=8, pending=0` / 过严阈值线上筛 | kind=`too_strict`；alerts 含「阈值可能过严」 |
+| 0 入选 + 有待确认 | 8 只全缺失；或 `excluded=5, pending=3` | kind=`has_pending`；tip=`暂无确认入选，仍有 N 只因数据不足待确认`；**不含**「阈值可能过严」 |
 | 数据失败 | 扶摇失败/回退演示 | kind=`data_unavailable`，展示失败原因 |
 
 本地脚本：`npx tsx scripts/verify-review2.mts`（全部断言通过）。
@@ -93,4 +96,4 @@ Vercel 配置页：项目 → Settings → Environment Variables → `FUYAO_API_
 
 `npm run build`：通过（exit 0）。  
 `npx tsx scripts/verify-review2.mts`：波动率 -1% 回退 + 8 只全部待确认 断言通过。  
-线上过严提示复测（Production）：提交 `91796d6`，`selected=0/excluded=8`，alerts 含「阈值可能过严」、不含「全部待确认」。
+线上过严提示复测：`selected=0/excluded=8/pending=0` 时 alerts 含「阈值可能过严」；有待确认时改为「暂无确认入选，仍有 N 只…」。

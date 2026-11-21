@@ -134,7 +134,7 @@ export default function HomePage() {
       const outcome = classifyScreenOutcome(data.counts, data.dataAlerts);
       if (outcome.kind === "data_unavailable") {
         setNotice(`筛选完成，但数据侧异常：${outcome.tip}`);
-      } else if (outcome.kind === "all_pending") {
+      } else if (outcome.kind === "has_pending") {
         setNotice(`${outcome.tip}。原条件已保留。`);
       } else if (outcome.kind === "too_strict") {
         setNotice(`${outcome.tip}。原条件已保留，请修改后重试。`);

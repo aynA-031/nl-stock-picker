@@ -2,13 +2,15 @@ import type { ScreenResult } from "./types";
 
 /** Shared empty-selection / notice classification for API + UI. */
 export const SCREEN_TIP_TOO_STRICT = "当前股票池下没有命中，阈值可能过严";
-export const SCREEN_TIP_ALL_PENDING =
-  "股票池内标的全部为待确认（数据缺失或字段不足），无法判定是否命中；请检查数据源或稍后重试";
+
+export function tipPendingRemain(n: number): string {
+  return `暂无确认入选，仍有 ${n} 只因数据不足待确认`;
+}
 
 export type ScreenOutcomeKind =
   | "has_hits"
   | "too_strict"
-  | "all_pending"
+  | "has_pending"
   | "data_unavailable";
 
 export interface ScreenOutcome {
@@ -21,17 +23,16 @@ function looksLikeDataFailure(alerts: string[] | undefined): boolean {
   if (!alerts?.length) return false;
   return alerts.some((a) => {
     if (a.includes("同一数据快照") || a.includes("已刷新数据")) return false;
-    if (a.includes(SCREEN_TIP_TOO_STRICT) || a.includes(SCREEN_TIP_ALL_PENDING)) {
-      return false;
-    }
+    if (a.includes(SCREEN_TIP_TOO_STRICT)) return false;
+    if (a.includes("暂无确认入选") || a.includes("全部待确认")) return false;
     return /失败|回退演示|缺少|未配置|无效密钥|接口异常|error/i.test(a);
   });
 }
 
 /**
  * Decide why selection is empty (or not).
- * 「阈值可能过严」仅在：数据可用，且确有可判定结果但无入选（存在 excluded）时。
- * 若全部待确认，则提示数据缺失/待确认，不提示过严。
+ * - 0 入选且仍有待确认 →「暂无确认入选，仍有 N 只因数据不足待确认」
+ * - 仅当 0 入选且 0 待确认 →「阈值可能过严」
  */
 export function classifyScreenOutcome(
   counts: ScreenResult["counts"],
@@ -62,23 +63,16 @@ export function classifyScreenOutcome(
     };
   }
 
-  // All pending (e.g. 8/8)：数据缺失主导，不是阈值过严
-  if (counts.pending > 0 && counts.excluded === 0 && counts.selected === 0) {
+  // Any pending while none selected → data-insufficiency tip (not too-strict)
+  if (counts.pending > 0) {
     return {
-      kind: "all_pending",
-      tip: `当前股票池 ${counts.pending} 只全部待确认（数据缺失或字段不足），无法判定是否命中；请检查数据源或稍后重试`,
+      kind: "has_pending",
+      tip: tipPendingRemain(counts.pending),
     };
   }
 
-  // Data usable: at least some stocks were excluded by conditions
-  if (counts.excluded > 0) {
-    return { kind: "too_strict", tip: SCREEN_TIP_TOO_STRICT };
-  }
-
-  return {
-    kind: "data_unavailable",
-    tip: "未能形成可判定结果，请检查数据源",
-  };
+  // selected === 0 && pending === 0
+  return { kind: "too_strict", tip: SCREEN_TIP_TOO_STRICT };
 }
 
 /** Append outcome tip into alerts (idempotent). */
@@ -91,18 +85,18 @@ export function withOutcomeAlert(
   if (alerts.some((a) => a.includes(outcome.tip!) || a === outcome.tip)) {
     return alerts;
   }
-  // Prefer not stacking too_strict if we already decided all_pending
-  if (outcome.kind === "all_pending") {
-    return [
-      ...alerts.filter((a) => !a.includes(SCREEN_TIP_TOO_STRICT)),
-      outcome.tip,
-    ];
-  }
-  if (outcome.kind === "too_strict") {
-    return [...alerts, outcome.tip];
+
+  const withoutOldTips = alerts.filter(
+    (a) =>
+      !a.includes(SCREEN_TIP_TOO_STRICT) &&
+      !a.includes("暂无确认入选") &&
+      !a.includes("全部待确认"),
+  );
+
+  if (outcome.kind === "has_pending" || outcome.kind === "too_strict") {
+    return [...withoutOldTips, outcome.tip];
   }
   if (outcome.kind === "data_unavailable") {
-    // failure notes usually already present; only add if missing
     return alerts.some((a) => a.includes(outcome.tip!))
       ? alerts
       : [...alerts, outcome.tip];
