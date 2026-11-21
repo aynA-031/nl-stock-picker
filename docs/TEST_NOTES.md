@@ -64,24 +64,26 @@ Vercel 配置页：项目 → Settings → Environment Variables → `FUYAO_API_
 
 ### 7.1 `/api/screen` 运行时入参校验 → HTTP 400
 
-| 用例 | 请求要点 | 本地实测 | 线上复测（Production） |
-|------|----------|----------|------------------------|
-| `value: "abc"` | `conditions[0].value="abc"` | **HTTP 400**；`error`: `conditions[0].value 必须是有限数字，收到 "abc"` | （部署后填写） |
-| 倒置区间 | `pe_ttm` `op=between` `value=35` `valueMax=8` | **HTTP 400**；区间倒置说明 | （部署后填写） |
+| 用例 | 请求要点 | 本地实测 | 线上复测（Production，提交 `a4b3742`） |
+|------|----------|----------|----------------------------------------|
+| `value: "abc"` | `conditions[0].value="abc"` | **HTTP 400**；`error`: `conditions[0].value 必须是有限数字，收到 "abc"` | **HTTP 400**；同文案 |
+| 倒置区间 | `pe_ttm` `op=between` `value=35` `valueMax=8` | **HTTP 400**；区间倒置说明 | **HTTP 400**；`下限 value=35 大于上限 valueMax=8` |
 | 共用规则 | `previousConditions` 与 `conditions` 同一套校验 | 非法对比条件同样 400 | 同左 |
 
 ### 7.2 合法草稿 0 命中提示
 
-| 用例 | 请求要点 | 本地实测 | 线上复测（Production） |
-|------|----------|----------|------------------------|
-| 过严阈值 | 营收 `>999`、PE `1~2`、波动 `<1` | **HTTP 200**；`selected=0`；`dataAlerts` 含「当前股票池下没有命中，阈值可能过严」 | （部署后填写） |
+| 用例 | 请求要点 | 本地实测 | 线上复测（Production，提交 `a4b3742`） |
+|------|----------|----------|----------------------------------------|
+| 过严阈值 | 营收 `>999`、PE `1~2`、波动 `<1` | **HTTP 200**；`selected=0`；`dataAlerts` 含「当前股票池下没有命中，阈值可能过严」 | **HTTP 200**；`dataMode=fuyao`；`selected=0`；alerts 含同一提示 |
 | 数据失败区分 | 扶摇失败/回退演示 | 优先展示失败类 alerts | 同左 |
 
 ### 7.3 `unsupportedAspects` 澄清红字
 
-| 用例 | 意图 | 本地实测 | 线上复测（Production） |
-|------|----------|----------|------------------------|
-| 全部不支持 | 「ROE 大于 15%、负债率低于 40%、连续分红」 | `unsupportedAspects` 含 ROE / 负债率 / 分红；`conditions=[]` | （部署后填写） |
+| 用例 | 意图 | 本地实测 | 线上复测（Production，提交 `a4b3742`） |
+|------|----------|----------|----------------------------------------|
+| 全部不支持 | 「ROE 大于 15%、负债率低于 40%、连续分红」 | `unsupportedAspects` 含 ROE / 负债率 / 分红；`conditions=[]` | 同左：`["ROE（净资产收益率）","负债率 / 资产负债率","分红 / 股息"]`；`conditions=[]` |
 | 混合意图 | 含已支持 + 不支持 | 只生成受支持条件；红字列出不支持项 | 同左 |
 
-`npm run build`：通过（exit 0）。部署提交号与线上结果见本节更新行。
+`npm run build`：通过（exit 0）。  
+线上功能验收提交：`a4b3742`（Vercel Production Ready）。  
+交付文档补记提交见本仓库后续 `docs` 提交。
