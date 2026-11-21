@@ -70,12 +70,19 @@ Vercel 配置页：项目 → Settings → Environment Variables → `FUYAO_API_
 | 倒置区间 | `pe_ttm` `op=between` `value=35` `valueMax=8` | **HTTP 400**；区间倒置说明 | **HTTP 400**；`下限 value=35 大于上限 valueMax=8` |
 | 共用规则 | `previousConditions` 与 `conditions` 同一套校验 | 非法对比条件同样 400 | 同左 |
 
-### 7.2 合法草稿 0 命中提示
+### 7.2 模型阈值范围 + 0 命中 / 全部待确认（评审 ② 补齐）
 
-| 用例 | 请求要点 | 本地实测 | 线上复测（Production，提交 `a4b3742`） |
-|------|----------|----------|----------------------------------------|
-| 过严阈值 | 营收 `>999`、PE `1~2`、波动 `<1` | **HTTP 200**；`selected=0`；`dataAlerts` 含「当前股票池下没有命中，阈值可能过严」 | **HTTP 200**；`dataMode=fuyao`；`selected=0`；alerts 含同一提示 |
-| 数据失败区分 | 扶摇失败/回退演示 | 优先展示失败类 alerts | 同左 |
+前后端共用 `src/lib/screen-outcome.ts` 的 `classifyScreenOutcome`：**仅当数据可用且存在 excluded、selected=0** 时提示「阈值可能过严」；**全部待确认**时提示数据缺失/待确认，不提示过严。
+
+| 用例 | 做法 | 实测 |
+|------|------|------|
+| 模拟模型「波动率上限 -1%」 | `applyLlmDraftPatches({ volatility_20d: { op:"<", value:-1 } })` | 回退默认 `< 35%`；`draftNotes` 含「超出允许范围 [0.1, 200]%」与「已回退为默认」 |
+| 指标数值范围 | `LLM_THRESHOLD_RANGES`：营收同比 [-100,500]%；PE [0,200] 倍；波动率上限 [0.1,200]% | 写入 `validate-conditions.ts`，LLM system prompt 同步提示 |
+| 过严阈值（有数据） | 营收 `>999`、PE `1~2`、波动 `<1` | **HTTP 200**；`excluded>0`；alerts 含「当前股票池下没有命中，阈值可能过严」 |
+| **8 只全部待确认** | 引擎合成 8 只字段全缺失股票 + `withOutcomeAlert` | `counts.pending=8`；kind=`all_pending`；tip 含「8 只全部待确认（数据缺失或字段不足）」；**不含**「阈值可能过严」 |
+| 数据失败 | 扶摇失败/回退演示 | kind=`data_unavailable`，展示失败原因 |
+
+本地脚本：`npx tsx scripts/verify-review2.mts`（全部断言通过）。
 
 ### 7.3 `unsupportedAspects` 澄清红字
 

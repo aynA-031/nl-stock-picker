@@ -14,11 +14,45 @@ export const COMPARE_OPS: readonly CompareOp[] = [
   "between",
 ] as const;
 
+/** Explicit numeric ranges for LLM draft thresholds (and soft guidance). */
+export const LLM_THRESHOLD_RANGES: Record<
+  MetricId,
+  { min: number; max: number; unit: string; label: string }
+> = {
+  revenue_yoy: {
+    min: -100,
+    max: 500,
+    unit: "%",
+    label: "营收同比",
+  },
+  pe_ttm: {
+    min: 0,
+    max: 200,
+    unit: "倍",
+    label: "PE(TTM)",
+  },
+  volatility_20d: {
+    // Upper bound must be positive; -1% is invalid and must fall back
+    min: 0.1,
+    max: 200,
+    unit: "%",
+    label: "近20日波动率上限",
+  },
+};
+
 const METRIC_SET = new Set<string>(METRIC_IDS);
 const OP_SET = new Set<string>(COMPARE_OPS);
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
+}
+
+function outOfRangeReason(metricId: MetricId, value: number, which: string): string | null {
+  const range = LLM_THRESHOLD_RANGES[metricId];
+  if (value < range.min || value > range.max) {
+    return `${range.label} 的 ${which}=${value}${range.unit} 超出允许范围 [${range.min}, ${range.max}]${range.unit}`;
+  }
+  return null;
 }
 
 /** Validate one condition-like object. Returns a concrete error message or null if ok. */
@@ -122,5 +156,24 @@ export function invalidThresholdReason(
   ) {
     return `${metricId} 区间倒置（${value} > ${valueMax}）`;
   }
+
+  if (value !== undefined) {
+    const r = outOfRangeReason(metricId, value, "value");
+    if (r) return r;
+  }
+  if (valueMax !== undefined) {
+    const r = outOfRangeReason(metricId, valueMax, "valueMax");
+    if (r) return r;
+  }
+
   return null;
+}
+
+export function llmRangeHintForPrompt(): string {
+  return (Object.keys(LLM_THRESHOLD_RANGES) as MetricId[])
+    .map((id) => {
+      const r = LLM_THRESHOLD_RANGES[id];
+      return `- ${id}: ${r.label} 数值须在 [${r.min}, ${r.max}]${r.unit}`;
+    })
+    .join("\n");
 }

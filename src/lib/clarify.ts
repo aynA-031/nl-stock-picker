@@ -5,7 +5,10 @@ import {
   detectUnsupportedAspects,
   isGenericSupportedIntent,
 } from "./unsupported";
-import { invalidThresholdReason } from "./validate-conditions";
+import {
+  invalidThresholdReason,
+  llmRangeHintForPrompt,
+} from "./validate-conditions";
 import type { ClarificationQuestion, ClarifyResult, Condition, MetricId } from "./types";
 
 function cloneConditions(): Condition[] {
@@ -84,10 +87,66 @@ function filterConditionsByMetrics(
   return conditions.filter((c) => set.has(c.id));
 }
 
-type LlmDraftResult = {
+export type LlmDraftResult = {
   conditions: Condition[];
   draftNotes: string[];
 };
+
+type LlmPatchMap = Record<
+  string,
+  { op?: Condition["op"]; value?: unknown; valueMax?: unknown }
+>;
+
+/**
+ * Apply model JSON patches onto default conditions with per-metric range checks.
+ * Exported so tests can simulate invalid model output (e.g. volatility -1%).
+ */
+export function applyLlmDraftPatches(parsed: LlmPatchMap): LlmDraftResult {
+  const conditions = cloneConditions();
+  const draftNotes: string[] = [];
+
+  for (const c of conditions) {
+    const patch = parsed[c.id];
+    if (!patch || typeof patch !== "object") continue;
+
+    const reason = invalidThresholdReason(c.id, patch);
+    if (reason) {
+      const def = defaultFor(c.id);
+      c.op = def.op;
+      c.value = def.value;
+      c.valueMax = def.valueMax;
+      draftNotes.push(
+        `${c.label}：模型给出的阈值无效（${reason}），已回退为默认 ${def.op} ${def.value}${
+          def.valueMax !== undefined ? `–${def.valueMax}` : ""
+        }${def.unit}。`,
+      );
+      continue;
+    }
+
+    if (patch.op) c.op = patch.op;
+    if (typeof patch.value === "number" && Number.isFinite(patch.value)) {
+      c.value = patch.value;
+    }
+    if (typeof patch.valueMax === "number" && Number.isFinite(patch.valueMax)) {
+      c.valueMax = patch.valueMax;
+    }
+
+    if (c.op === "between") {
+      const max = c.valueMax;
+      if (typeof max !== "number" || !Number.isFinite(max) || c.value > max) {
+        const def = defaultFor(c.id);
+        c.op = def.op;
+        c.value = def.value;
+        c.valueMax = def.valueMax;
+        draftNotes.push(
+          `${c.label}：合并后区间无效，已回退为默认 ${def.value}–${def.valueMax}${def.unit}。`,
+        );
+      }
+    }
+  }
+
+  return { conditions, draftNotes };
+}
 
 async function tryLlmDraft(intent: string): Promise<LlmDraftResult | null> {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -102,7 +161,9 @@ async function tryLlmDraft(intent: string): Promise<LlmDraftResult | null> {
 - pe_ttm: op "between", value 下限, valueMax 上限
 - volatility_20d: op "<" 或 "<=", value 年化波动率上限(%)
 JSON 形如：{"revenue_yoy":{"op":">","value":10},"pe_ttm":{"op":"between","value":8,"valueMax":35},"volatility_20d":{"op":"<","value":35}}
-数值必须是有限数字；between 必须下限≤上限。`;
+数值必须是有限数字；between 必须下限≤上限。
+各指标允许范围：
+${llmRangeHintForPrompt()}`;
 
   try {
     const res = await fetch(`${base.replace(/\/$/, "")}/chat/completions`, {
@@ -127,59 +188,8 @@ JSON 形如：{"revenue_yoy":{"op":">","value":10},"pe_ttm":{"op":"between","val
     };
     const content = data.choices?.[0]?.message?.content;
     if (!content) return null;
-    const parsed = JSON.parse(content) as Record<
-      string,
-      { op?: Condition["op"]; value?: unknown; valueMax?: unknown }
-    >;
-    const conditions = cloneConditions();
-    const draftNotes: string[] = [];
-
-    for (const c of conditions) {
-      const patch = parsed[c.id];
-      if (!patch || typeof patch !== "object") continue;
-
-      const reason = invalidThresholdReason(c.id, patch);
-      if (reason) {
-        const def = defaultFor(c.id);
-        c.op = def.op;
-        c.value = def.value;
-        c.valueMax = def.valueMax;
-        draftNotes.push(
-          `${c.label}：模型给出的阈值无效（${reason}），已回退为默认 ${def.op} ${def.value}${
-            def.valueMax !== undefined ? `–${def.valueMax}` : ""
-          }${def.unit}。`,
-        );
-        continue;
-      }
-
-      if (patch.op) c.op = patch.op;
-      if (typeof patch.value === "number" && Number.isFinite(patch.value)) {
-        c.value = patch.value;
-      }
-      if (typeof patch.valueMax === "number" && Number.isFinite(patch.valueMax)) {
-        c.valueMax = patch.valueMax;
-      }
-
-      // Final safety: between bounds after merge
-      if (c.op === "between") {
-        const max = c.valueMax;
-        if (
-          typeof max !== "number" ||
-          !Number.isFinite(max) ||
-          c.value > max
-        ) {
-          const def = defaultFor(c.id);
-          c.op = def.op;
-          c.value = def.value;
-          c.valueMax = def.valueMax;
-          draftNotes.push(
-            `${c.label}：合并后区间无效，已回退为默认 ${def.value}–${def.valueMax}${def.unit}。`,
-          );
-        }
-      }
-    }
-
-    return { conditions, draftNotes };
+    const parsed = JSON.parse(content) as LlmPatchMap;
+    return applyLlmDraftPatches(parsed);
   } catch {
     return null;
   }

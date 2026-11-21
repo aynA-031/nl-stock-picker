@@ -5,6 +5,7 @@ import { ConditionEditor } from "@/components/ConditionEditor";
 import { ResultPanel } from "@/components/ResultPanel";
 import { StrategyPanel } from "@/components/StrategyPanel";
 import { detectConflicts } from "@/lib/conflicts";
+import { classifyScreenOutcome } from "@/lib/screen-outcome";
 import {
   deleteStrategy,
   listStrategies,
@@ -130,18 +131,13 @@ export default function HomePage() {
       setFilter("all");
       const refreshed = data.dataAlerts?.some((a) => a.includes("已刷新数据，前后条件均按新快照重算"));
       const sameSnap = data.dataAlerts?.some((a) => a.includes("同一数据快照"));
-      const zeroHit = data.dataAlerts?.some((a) =>
-        a.includes("当前股票池下没有命中，阈值可能过严"),
-      );
-      const dataFailed = data.dataAlerts?.some((a) =>
-        /失败|回退演示|未配置|无效密钥/i.test(a),
-      );
-      if (dataFailed) {
-        setNotice(
-          `筛选完成，但数据侧有异常：${data.dataAlerts.filter((a) => /失败|回退演示|未配置|无效/i.test(a)).join("；")}`,
-        );
-      } else if (zeroHit || data.counts.selected === 0) {
-        setNotice("当前股票池下没有命中，阈值可能过严。原条件已保留，请修改后重试。");
+      const outcome = classifyScreenOutcome(data.counts, data.dataAlerts);
+      if (outcome.kind === "data_unavailable") {
+        setNotice(`筛选完成，但数据侧异常：${outcome.tip}`);
+      } else if (outcome.kind === "all_pending") {
+        setNotice(`${outcome.tip}。原条件已保留。`);
+      } else if (outcome.kind === "too_strict") {
+        setNotice(`${outcome.tip}。原条件已保留，请修改后重试。`);
       } else if (data.delta) {
         setNotice(
           refreshed

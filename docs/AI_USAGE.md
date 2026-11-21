@@ -39,10 +39,12 @@
 - **发现**：TypeScript 类型在编译期有效，但 HTTP JSON 可传入 `value: "abc"`、倒置 `between` 区间、错误 `field` 等；引擎可能把脏数据当正常筛选。
 - **修复**：新增 `src/lib/validate-conditions.ts`，`conditions` 与 `previousConditions` 共用校验（ID 白名单、`field`≡`id`、`op` 枚举、有限数字；`between` 要求有限 `valueMax` 且下限≤上限）。失败返回 **HTTP 400** 并指出具体条件/字段。
 
-### 2. LLM 草稿阈值与 0 命中体验不足
+### 2. LLM 草稿阈值与 0 命中体验不足（含补齐）
 
-- **发现**：模型可能输出非数字/倒置区间；过严合法条件筛出 0 只时缺少明确引导；数据失败与「条件过严」易混淆。
-- **修复**：`tryLlmDraft()` 按指标校验阈值，无效则回退 `defaults.ts` 默认值并写入 `draftNotes`；合法请求 `selected=0` 且数据路径正常时追加提示「当前股票池下没有命中，阈值可能过严」并保留原条件；失败类 `dataAlerts` 优先展示原因。
+- **发现**：模型可能输出非数字/倒置区间/无意义负波动率；仅按 `selected===0` 提示「过严」会把「全部待确认（缺数）」误判成阈值问题。
+- **修复**：
+  1. `LLM_THRESHOLD_RANGES` 对各指标做明确数值范围校验（波动率上限须 ∈ [0.1, 200]%）；`applyLlmDraftPatches` 无效则回退 `defaults.ts` 并写 `draftNotes` 原因。模拟「波动率 -1%」已验证回退默认 35%。
+  2. 前后端共用 `classifyScreenOutcome`：仅数据可用且存在 excluded、无入选时提示「阈值可能过严」；8 只全部待确认时提示数据缺失/待确认，不提示过严；接口失败走 `data_unavailable`。
 
 ### 3. 不支持指标未明示
 

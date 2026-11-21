@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { runScreen } from "@/lib/engine";
 import { loadMarketBundle } from "@/lib/fuyao";
 import { getSnapshot, putSnapshot } from "@/lib/snapshot-cache";
+import { withOutcomeAlert } from "@/lib/screen-outcome";
 import type { Condition } from "@/lib/types";
 import { validateConditionsArray } from "@/lib/validate-conditions";
 
@@ -102,17 +103,8 @@ export async function POST(request: Request) {
       previousSelectedCodes,
     });
 
-    // Soft tip for empty selection when data path itself looks healthy
-    const dataFailed = alerts.some(
-      (a) =>
-        /失败|回退演示|缺少|无效|未配置|error|Error/i.test(a) &&
-        !a.includes("同一数据快照") &&
-        !a.includes("已刷新数据"),
-    );
-    if (result.counts.selected === 0 && !dataFailed) {
-      alerts.push("当前股票池下没有命中，阈值可能过严");
-      result.dataAlerts = alerts;
-    }
+    // Shared outcome: too_strict only when data usable; all-pending → data tip
+    result.dataAlerts = withOutcomeAlert(alerts, result.counts);
 
     return NextResponse.json({ ...result, snapshotId });
   } catch (err) {
