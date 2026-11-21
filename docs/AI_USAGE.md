@@ -2,7 +2,7 @@
 
 ## 使用的 AI 工具
 
-- Cursor Agent：实现主链路、扶摇口径修正、快照复用、合规拒绝、文档与提交包。
+- Cursor Agent：实现主链路、扶摇口径修正、快照复用、合规拒绝、入参校验、不支持指标提示、文档与提交包。
 - 可选运行时 LLM（`OPENAI_API_KEY`）：仅起草条件 JSON；未配置则 `usedLlm=false`。
 - 扶摇 REST（非 Cursor MCP）：估值 / 财务指标 / 利润表披露日 / 历史 K 线。
 
@@ -21,16 +21,33 @@
 
 鉴权：`X-api-key`。
 
-### 口径修正（本轮）
+### 口径修正
 
 1. 营收同比 `asOf` 展示真实报告期（如 `报告期 2025年报（2025-4）`），有 `report_date_ms` 则追加公告日。
 2. 波动率不足 21 根收盘价时不计算、不静默通过。
-3. 修改阈值做进出对比时，客户端携带 `snapshotId`，服务端复用同一 `MarketBundle`，保证前后轮数据一致。
+3. 修改阈值做进出对比时，客户端携带 `snapshotId`；可复用则同快照对比；不可复用则同一新数据上分别跑旧/新条件，并提示「已刷新数据，前后条件均按新快照重算」。
 
 ### 茅台核对样例
 
 - `pe_ttm` ≈ 22.605792；来源扶摇 REST。
 - 营收同比实盘字段带 `calculate_` 前缀；报告期由 `FUYAO_REPORT` 控制。
+
+## 本轮评审修复（发现 → 修复）
+
+### 1. `/api/screen` 缺少运行时入参校验
+
+- **发现**：TypeScript 类型在编译期有效，但 HTTP JSON 可传入 `value: "abc"`、倒置 `between` 区间、错误 `field` 等；引擎可能把脏数据当正常筛选。
+- **修复**：新增 `src/lib/validate-conditions.ts`，`conditions` 与 `previousConditions` 共用校验（ID 白名单、`field`≡`id`、`op` 枚举、有限数字；`between` 要求有限 `valueMax` 且下限≤上限）。失败返回 **HTTP 400** 并指出具体条件/字段。
+
+### 2. LLM 草稿阈值与 0 命中体验不足
+
+- **发现**：模型可能输出非数字/倒置区间；过严合法条件筛出 0 只时缺少明确引导；数据失败与「条件过严」易混淆。
+- **修复**：`tryLlmDraft()` 按指标校验阈值，无效则回退 `defaults.ts` 默认值并写入 `draftNotes`；合法请求 `selected=0` 且数据路径正常时追加提示「当前股票池下没有命中，阈值可能过严」并保留原条件；失败类 `dataAlerts` 优先展示原因。
+
+### 3. 不支持指标未明示
+
+- **发现**：用户提到 ROE、负债率、分红等时仍可能生成默认三条件，易误解为已筛选这些指标。
+- **修复**：`ClarifyResult.unsupportedAspects` + `src/lib/unsupported.ts`；澄清卡红字列出；混合意图只生成已支持条件；全部不支持则 `conditions=[]` 并提示改写意图。
 
 ## 合规实测
 

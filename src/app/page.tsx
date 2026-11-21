@@ -83,8 +83,14 @@ export default function HomePage() {
       setConditions(data.conditions);
       if (data.complianceBlocked) {
         setNotice(data.complianceMessage ?? data.summary);
+      } else if ((data.unsupportedAspects?.length ?? 0) > 0 && data.conditions.length === 0) {
+        setNotice("当前意图涉及的指标均暂不支持，请改写后再澄清。");
       } else {
-        setNotice("已生成可修改条件。请检查阈值后点击「执行筛选」。");
+        setNotice(
+          data.draftNotes?.length
+            ? `已生成可修改条件。${data.draftNotes[0]}请检查阈值后点击「执行筛选」。`
+            : "已生成可修改条件。请检查阈值后点击「执行筛选」。",
+        );
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "澄清失败");
@@ -124,7 +130,19 @@ export default function HomePage() {
       setFilter("all");
       const refreshed = data.dataAlerts?.some((a) => a.includes("已刷新数据，前后条件均按新快照重算"));
       const sameSnap = data.dataAlerts?.some((a) => a.includes("同一数据快照"));
-      if (data.delta) {
+      const zeroHit = data.dataAlerts?.some((a) =>
+        a.includes("当前股票池下没有命中，阈值可能过严"),
+      );
+      const dataFailed = data.dataAlerts?.some((a) =>
+        /失败|回退演示|未配置|无效密钥/i.test(a),
+      );
+      if (dataFailed) {
+        setNotice(
+          `筛选完成，但数据侧有异常：${data.dataAlerts.filter((a) => /失败|回退演示|未配置|无效/i.test(a)).join("；")}`,
+        );
+      } else if (zeroHit || data.counts.selected === 0) {
+        setNotice("当前股票池下没有命中，阈值可能过严。原条件已保留，请修改后重试。");
+      } else if (data.delta) {
         setNotice(
           refreshed
             ? `筛选完成（已刷新数据并按新快照重算前后条件）。${data.delta.note}`
@@ -259,6 +277,30 @@ export default function HomePage() {
             <p className="alert alert-error" style={{ marginTop: 12 }}>
               {clarify.complianceMessage}
             </p>
+          )}
+          {(clarify.unsupportedAspects?.length ?? 0) > 0 && (
+            <div className="alert alert-error" style={{ marginTop: 12 }}>
+              <div style={{ fontWeight: 600 }}>本次无法筛选以下暂不支持的指标：</div>
+              <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
+                {clarify.unsupportedAspects!.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+              {clarify.conditions.length === 0 && (
+                <p style={{ marginTop: 8, marginBottom: 0 }}>
+                  请改写意图，改用营收同比、PE(TTM)、近20日波动率等已支持条件。
+                </p>
+              )}
+            </div>
+          )}
+          {(clarify.draftNotes?.length ?? 0) > 0 && (
+            <div className="alert alert-warn" style={{ marginTop: 12 }}>
+              {clarify.draftNotes!.map((n) => (
+                <p key={n} style={{ margin: "0 0 6px" }}>
+                  {n}
+                </p>
+              ))}
+            </div>
           )}
           {clarify.questions.length > 0 && (
             <div className="stack" style={{ marginTop: 14 }}>

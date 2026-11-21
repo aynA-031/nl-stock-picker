@@ -46,6 +46,10 @@ export interface ClarifyResult {
   /** True when intent asks for guaranteed returns / buy advice */
   complianceBlocked?: boolean;
   complianceMessage?: string;
+  /** Requested metrics not in MVP field set (shown in red on clarify card) */
+  unsupportedAspects?: string[];
+  /** Draft tips e.g. LLM threshold fallback to defaults */
+  draftNotes?: string[];
 }
 
 export interface MetricValue {

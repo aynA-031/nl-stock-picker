@@ -3,18 +3,44 @@ import { runScreen } from "@/lib/engine";
 import { loadMarketBundle } from "@/lib/fuyao";
 import { getSnapshot, putSnapshot } from "@/lib/snapshot-cache";
 import type { Condition } from "@/lib/types";
+import { validateConditionsArray } from "@/lib/validate-conditions";
 
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
-      conditions?: Condition[];
-      previousConditions?: Condition[];
+      conditions?: unknown;
+      previousConditions?: unknown;
       previousSelectedCodes?: string[];
       snapshotId?: string;
     };
 
-    if (!body.conditions || !Array.isArray(body.conditions)) {
-      return NextResponse.json({ error: "缺少 conditions" }, { status: 400 });
+    const conditionsCheck = validateConditionsArray(body.conditions, "conditions");
+    if (!conditionsCheck.ok) {
+      return NextResponse.json(
+        {
+          error: conditionsCheck.error,
+          note: "请求入参未通过校验，未执行筛选。",
+        },
+        { status: 400 },
+      );
+    }
+
+    let previousConditionsValidated: Condition[] | undefined;
+    if (body.previousConditions !== undefined && body.previousConditions !== null) {
+      const prevCheck = validateConditionsArray(
+        body.previousConditions,
+        "previousConditions",
+      );
+      if (!prevCheck.ok) {
+        return NextResponse.json(
+          {
+            error: prevCheck.error,
+            note: "对比用 previousConditions 未通过校验，未执行筛选。",
+          },
+          { status: 400 },
+        );
+      }
+      previousConditionsValidated = prevCheck.conditions;
     }
 
     let bundle = getSnapshot(body.snapshotId);
@@ -29,14 +55,14 @@ export async function POST(request: Request) {
     const alerts = [...bundle.fetchNotes];
     let previousSelectedCodes = body.previousSelectedCodes;
     const hasPreviousConditions =
-      Array.isArray(body.previousConditions) && body.previousConditions.length > 0;
+      Array.isArray(previousConditionsValidated) &&
+      previousConditionsValidated.length > 0;
 
     if (reused) {
-      // Same snapshot: optionally recompute baseline from previous conditions for consistency
       if (hasPreviousConditions) {
         const baseline = runScreen({
           stocks: bundle.stocks,
-          conditions: body.previousConditions!,
+          conditions: previousConditionsValidated!,
           dataMode: bundle.dataMode,
           asOf: bundle.asOf,
           universeNote: bundle.universeNote,
@@ -50,10 +76,9 @@ export async function POST(request: Request) {
         `名单对比使用同一数据快照（snapshotId=${snapshotId}），前后两轮行情/财务口径一致。`,
       );
     } else if (hasPreviousConditions) {
-      // Snapshot missing/expired (common on serverless): one new fetch, run BOTH condition sets
       const baseline = runScreen({
         stocks: bundle.stocks,
-        conditions: body.previousConditions!,
+        conditions: previousConditionsValidated!,
         dataMode: bundle.dataMode,
         asOf: bundle.asOf,
         universeNote: bundle.universeNote,
@@ -69,13 +94,25 @@ export async function POST(request: Request) {
 
     const result = runScreen({
       stocks: bundle.stocks,
-      conditions: body.conditions,
+      conditions: conditionsCheck.conditions,
       dataMode: bundle.dataMode,
       asOf: bundle.asOf,
       universeNote: bundle.universeNote,
       dataAlerts: alerts,
       previousSelectedCodes,
     });
+
+    // Soft tip for empty selection when data path itself looks healthy
+    const dataFailed = alerts.some(
+      (a) =>
+        /失败|回退演示|缺少|无效|未配置|error|Error/i.test(a) &&
+        !a.includes("同一数据快照") &&
+        !a.includes("已刷新数据"),
+    );
+    if (result.counts.selected === 0 && !dataFailed) {
+      alerts.push("当前股票池下没有命中，阈值可能过严");
+      result.dataAlerts = alerts;
+    }
 
     return NextResponse.json({ ...result, snapshotId });
   } catch (err) {
