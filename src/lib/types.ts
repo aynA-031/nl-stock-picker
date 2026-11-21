@@ -117,6 +117,8 @@ export interface ScreenResult {
 
 export interface ScreenRequest {
   conditions: Condition[];
+  /** Prior-round conditions; used to recompute baseline when snapshot cannot be reused */
+  previousConditions?: Condition[];
   previousSelectedCodes?: string[];
   snapshotId?: string;
 }

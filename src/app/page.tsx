@@ -38,6 +38,7 @@ export default function HomePage() {
   const [conditions, setConditions] = useState<Condition[]>([]);
   const [result, setResult] = useState<ScreenResult | null>(null);
   const [previousSelected, setPreviousSelected] = useState<string[] | undefined>();
+  const [previousConditions, setPreviousConditions] = useState<Condition[] | undefined>();
   const [snapshotId, setSnapshotId] = useState<string | undefined>();
   const [screenedSignature, setScreenedSignature] = useState<string | null>(null);
   const [filter, setFilter] = useState<StockStatus | "all">("all");
@@ -67,6 +68,7 @@ export default function HomePage() {
     setNotice(null);
     setResult(null);
     setPreviousSelected(undefined);
+    setPreviousConditions(undefined);
     setSnapshotId(undefined);
     setScreenedSignature(null);
     try {
@@ -106,6 +108,7 @@ export default function HomePage() {
         body: JSON.stringify({
           conditions,
           previousSelectedCodes: previousSelected,
+          previousConditions,
           snapshotId,
         }),
       });
@@ -116,13 +119,22 @@ export default function HomePage() {
       setPreviousSelected(
         data.results.filter((r) => r.status === "selected").map((r) => r.code),
       );
+      setPreviousConditions(conditions.map((c) => ({ ...c })));
       setScreenedSignature(conditionsSignature(conditions));
       setFilter("all");
+      const refreshed = data.dataAlerts?.some((a) => a.includes("已刷新数据，前后条件均按新快照重算"));
+      const sameSnap = data.dataAlerts?.some((a) => a.includes("同一数据快照"));
       if (data.delta) {
-        setNotice(`筛选完成（同一数据快照）。${data.delta.note}`);
+        setNotice(
+          refreshed
+            ? `筛选完成（已刷新数据并按新快照重算前后条件）。${data.delta.note}`
+            : sameSnap
+              ? `筛选完成（同一数据快照）。${data.delta.note}`
+              : `筛选完成。${data.delta.note}`,
+        );
       } else {
         setNotice(
-          "筛选完成。若要查看进出名单，请修改下方阈值后再次点击「执行筛选」（将复用同一数据快照）。",
+          "筛选完成。若要查看进出名单，请修改下方阈值后再次点击「执行筛选」。",
         );
       }
     } catch (err) {
@@ -166,6 +178,7 @@ export default function HomePage() {
     });
     setResult(null);
     setPreviousSelected(s.selectedCodes);
+    setPreviousConditions(s.conditions.map((c) => ({ ...c })));
     setSnapshotId(undefined);
     setScreenedSignature(null);
     setNotice(`已加载「${s.name}」。点击「执行筛选」可基于当前条件重新计算。`);
