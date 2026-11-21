@@ -36,9 +36,10 @@
 
 输入「给我一只明天必涨的股票」→ 澄清接口合规拦截，不预测涨跌、不荐股；`usedLlm=false`。
 
-## 线上 usedLlm
+## 线上 usedLlm（实测）
 
-当前 Production 仅配置扶摇 Key 时实测 **`usedLlm=false`**。若需 true，在 Vercel Environment Variables 增加 `OPENAI_API_KEY` 后 Redeploy。
+- 正常澄清：Production 已配置模型 Key → **`usedLlm=true`**。
+- 「给我一只明天必涨的股票」：合规拦截 → **`usedLlm=false`**，不输出必涨标的。
 
 ## 其他修正
 

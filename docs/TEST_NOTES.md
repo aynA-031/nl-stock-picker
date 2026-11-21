@@ -41,14 +41,15 @@
 4. 仍可给出默认可编辑条件卡，但文案强调仅事实筛选、非投资建议。
 5. 不会输出“必涨”标的列表。
 
-## 5. 线上澄清 `usedLlm`
+## 5. 线上澄清 `usedLlm`（实测）
 
-| 环境 | 期望 / 实测 |
-|------|-------------|
-| 仅配置 `FUYAO_API_KEY` | `usedLlm=false`（规则启发式）— **线上当前如此** |
-| 另配 `OPENAI_API_KEY` 并 Redeploy | 期望 `usedLlm=true`（调用失败则回退 false） |
+| 场景 | 实测 |
+|------|------|
+| 正常意图「经营改善、估值合理、走势稳定」 | **`usedLlm=true`**（Production 已配置 `OPENAI_API_KEY`） |
+| 合规意图「给我一只明天必涨的股票」 | **`usedLlm=false`** + `complianceBlocked=true`（合规短路，不调用模型荐股） |
+| 筛选 | `dataMode=fuyao`，返回 `snapshotId`；营收同比时点含报告期与公告日 |
 
-Vercel 配置页：项目 → Settings → Environment Variables → `OPENAI_API_KEY`（可选 `OPENAI_BASE_URL` / `OPENAI_MODEL`）。
+Vercel 配置页：项目 → Settings → Environment Variables → `FUYAO_API_KEY` / 可选 `OPENAI_API_KEY`。
 
 ## 6. 冲突 / 保存策略 / 合规文案
 
